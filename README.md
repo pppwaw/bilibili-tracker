@@ -1,128 +1,179 @@
 # Bilibili Tracker
 
-个人 B 站视频合集追更管理。Next.js 网页/API + 独立 Node.js Worker + SQLite。仅做网页版，读取 B 站网页版账号历史，不依赖浏览器本地记录。
+自托管的 B 站合集追更工具，把订阅合集、待看视频和观看进度整理到一个私人网页中。
 
-## 当前功能
+从 B 站同步合集与观看历史，按系列、章节和观看状态筛选视频，也可以批量修改状态，或将已点赞的视频标为已看。
 
-- 扫码登录，或填写 SESSDATA/Cookie；凭据 AES-256-GCM 加密，接口不回显。
-- 从「我追的」导入 Season，探测并排除普通收藏夹；分页获取合集视频与各分 P。
-- 首次仅发现合集列表，在「我的合集 → 全部合集」的卡片上勾选需要的合集后导入视频，再按 UP 主分组搜索观看历史（缺少 UP 主时使用视频标题），通过 BV 号精确匹配并保存 CID 进度。历史任务默认每 5 分钟执行，每轮最近历史最多 5 页、搜索最多 10 页；分页断点持久保存，已核对的搜索组缓存 24 小时，日常进度由最近历史增量更新。合集默认每 15 分钟同步，手动同步通过数据库队列执行。合集列表导入不再等待逐视频详情；详情任务每批最多 10 个，先补章节代表视频，随后补分 P，成功详情缓存 7 天，失败项至少隔天再尝试。
-- 未看/观看中/已看完/忽略，默认每个分 P 达到 95% 才算完成；可手动覆盖并恢复自动。
-- 保存历史观测及最大观看进度；云端历史消失或重看不会清空完成证据。
-- B 站粉蓝配色、设置页同步账号头像、响应式界面、搜索、概览/待看/最近收录按合集或系列筛选、合集详情按章节/分组筛选、合集详情、24 项分页、视频跨页批量状态修改、章节分组标题、同步日志、Worker 实时进度与心跳、凭据失效提醒。
-- 请求至少间隔 3 秒、超时、网络重试、任务失败指数退避、单 Worker 租约。B 站限流后按失败次数冷却 30 分钟至 4 小时，保留分页断点和已保存进度。
-- 私人密码登录、会话过期、登录限速、同源写入检查；可叠加 Cloudflare Access。
+> 面向单人、单账号使用。非 B 站官方产品，依赖的网页接口可能变化或受到限流。
+
+## 功能
+
+- **合集追更**：导入「我追的」视频合集，自选同步范围，设置新合集是否默认同步。
+- **观看进度**：同步历史，按分 P 保存进度，支持未看、观看中、已看完和忽略；手动标记可恢复自动判断。
+- **待看清单**：按合集、章节、状态和关键词筛选，默认按发布日期从新到旧排序，支持分页和跨页批量操作。
+- **点赞导入**：后台核对已同步视频的点赞状态，预览并确认后批量标为已看。
+- **后台同步**：展示任务进度、同步日志和 Worker 心跳，支持断点续传、失败重试与限流退避。
+- **私人部署**：密码访问，B 站凭据加密保存，支持 Docker Compose 和 Coolify。
+- **网页体验**：响应式粉蓝界面，筛选、排序、页码和视频详情保留在 URL，支持直达、刷新与前进后退。
+
+## 快速开始
+
+### Docker Compose
+
+需要 Docker 和 Docker Compose。
+
+```sh
+git clone https://github.com/pppwaw/bilibili-tracker.git
+cd bilibili-tracker
+cp .env.example .env
+```
+
+编辑 `.env`，设置访问地址、访问密码和加密密钥：
+
+```dotenv
+APP_ORIGIN=http://localhost:3000
+APP_PASSWORD=replace-with-a-long-random-password
+ENCRYPTION_KEY=replace-with-64-hex-characters
+```
+
+`APP_PASSWORD` 至少 12 位。使用以下命令生成 `ENCRYPTION_KEY`，将输出填入配置；上面的占位值不能直接使用：
+
+```sh
+# 本机安装 Node.js 时
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+# 或使用 Docker
+docker run --rm node:24-alpine node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+启动网页和后台同步服务：
+
+```sh
+docker compose -f compose.yaml -f compose.local.yaml up -d --build
+```
+
+打开 [http://localhost:3000](http://localhost:3000)，输入访问密码。
+
+本地配置仅监听 `127.0.0.1:3000`。远程部署请配置 HTTPS 反向代理，或通过 SSH 隧道访问。
+
+### 首次使用
+
+1. 在「设置」中扫码绑定 B 站账号，也可填写 SESSDATA / Cookie。
+2. 等待合集列表导入，在「我的合集 → 全部合集」勾选需要同步的合集。
+3. 在概览或待看清单查看视频；章节和分 P 信息由后台逐步补齐。
+4. 如需把已点赞的视频视为已看，点击批量操作栏的「导入点赞」，核对完成后预览并确认应用。
+
+新发现的合集默认不自动同步，可在「我的合集」调整。全选和全不选只作用于当前筛选结果。取消同步会隐藏合集及其独有视频，保留已有数据。
+
+## 配置
+
+| 变量 | 说明 |
+| --- | --- |
+| `APP_ORIGIN` | 浏览器访问的完整源地址，含协议与端口，必须与实际地址一致 |
+| `APP_PASSWORD` | 网页访问密码，至少 12 位 |
+| `ENCRYPTION_KEY` | 32 字节加密密钥，以 64 位十六进制表示；web 和 worker 必须一致 |
+| `DATABASE_PATH` | 本地数据库路径，默认配置为 `./data/bili.db`；Compose 中固定为 `/app/data/bili.db` |
+| `TZ` | 时区，示例及 Compose 使用 `Asia/Shanghai` |
+
+更改网页密码后需重启相关服务，已有会话将失效。加密密钥用于解密已保存的 B 站凭据，请妥善备份，不要随意更换。
+
+### Coolify / 反向代理
+
+1. 使用自己的仓库或 Fork，在 Coolify 中创建 Docker Compose 应用，配置文件选择 `/compose.yaml`。
+2. 设置 `APP_ORIGIN=https://your-domain.example`、`APP_PASSWORD` 和 `ENCRYPTION_KEY`。
+3. 为 `web` 的容器端口 `3000` 配置域名及 HTTPS。
+4. 保持 `worker` 不对外暴露，确保两个服务共享数据卷与密钥。
+5. 部署后登录网页，绑定账号，并检查 Worker 心跳和同步日志。
+
+主 Compose 文件不发布宿主机端口。使用其他反向代理时，将代理接入应用网络并转发到 `web:3000`。可另外配置 Cloudflare Access；同时检查默认域名等其他入口是否受到保护。
+
+SQLite 数据卷应位于同一台机器的本地磁盘，不支持 NFS 或多实例部署。web 与 worker 各运行一个实例。
+
+## 同步与状态说明
+
+合集默认每 15 分钟同步，历史默认每 5 分钟同步。视频详情分批补齐，请求至少间隔 3 秒；遇到限流会暂停并保留断点，稍后重试。视频较多时，首次同步和点赞核对需要较长时间，可关闭弹窗继续浏览。
+
+观看状态以实际获取到的历史为依据，默认每个分 P 达到 95% 才算完成，可在设置中调整阈值。已保存的最大观看进度不会因历史消失或重看而清空。
+
+- 没有匹配记录的视频显示为未看，可手动修正。
+- B 站历史可能被清理，搜索也可能漏匹配，因此无法保证完整还原全部观看记录。
+- 多 P 视频只记录实际观测到的分 P，不根据最后一 P 推断前面的内容已看完。
+- 点赞核对仅覆盖当前已同步合集的视频，确认前不会修改观看状态。
+- 账号凭据失效后需重新绑定；切换到不同 B 站账号应使用新的数据卷。
+
+当前不提供多用户、通知、视频下载或离线播放。播放链接打开 B 站网页。
 
 ## 本地开发
 
-Node.js 24.8+（24.x）。使用随源码提交的 package-lock.json 固定依赖。
+需要 **Node.js 24.8+（24.x）**。使用 Node.js 内置 SQLite，无需额外数据库服务。
 
 ```sh
 cp .env.example .env
-# 修改 APP_PASSWORD（至少 12 位）及 ENCRYPTION_KEY（32 字节十六进制）
+# 填写配置后安装依赖
 npm ci
 npm run dev
-# 另开终端，使用相同 .env 和 DATABASE_PATH
+```
+
+另开终端，启动后台同步进程：
+
+```sh
 npm run worker
 ```
 
-Next.js 开发进程会读取 .env；Worker 命令也显式加载它。打开 http://localhost:3000，进入设置绑定 B 站，到「我的合集 → 全部合集」的卡片上勾选要同步的合集。同页支持按合集名称或 UP 主筛选，全选/全不选仅操作当前显示的合集，保留其他选择，并可设置“新发现的合集默认同步”，仅影响以后首次发现的合集，默认关闭。未选合集及其独有视频从主界面隐藏，停止同步，但保留已有数据。APP_ORIGIN 必须与浏览器地址完全一致，例如 http://localhost:3000。
-
-生成加密密钥：
-
-```sh
-node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-```
-
-## 批量修改与点赞导入
-
-视频卡片标明完整发布日期，默认最新发布在前；可切换最早发布、最近收录、标题排序，合集详情另可按章节顺序排列。排序变化回到第一页。页面使用独立路径：/queue（待看）、/collections（合集）、/collections/123（合集详情）、/recent、/settings；合集/系列、章节/分组、搜索、状态、排序、页码和视频详情保留在 URL 查询参数中。旧版 ?view=... 链接会在打开时自动转换，支持刷新还原、分享直达与浏览器前进后退；搜索输入替换当前历史记录。视频列表每页 24 项，支持选择本页或全部筛选结果，批量标为已看完、未看、忽略，或恢复自动判断。修改只覆盖手动状态，不删除原始观看进度；批量请求验证所有视频后在事务中写入。
-
-批量操作栏中的“导入点赞”按钮打开弹窗，会快照当前已同步合集的视频范围，在后台逐个调用点赞状态接口核对，每批最多 10 个，失败保留断点。弹窗显示已核对/总数，可取消或关闭后后台继续；收起时按钮旁仅显示进度百分比或“待确认”。完整核对完成后预览匹配数量并确认应用，才会标为已看完。不使用仅返回近期记录的点赞列表冒充全部点赞。视频多时核对仍需时间，可继续浏览；应用后可批量恢复自动判断。
-
-合集详情显示上游提供的章节标题及每个分 P 的标题，搜索也包含已同步的分 P 标题。Worker 显示当前阶段、处理数量、待补详情及限流冷却时间，同步中每 3 秒刷新。
-
-## Docker Compose（本地或 SSH 隧道）
-
-```sh
-cp .env.example .env
-# 填写三个必需变量，APP_ORIGIN=http://localhost:3000
-docker compose -f compose.yaml -f compose.local.yaml up -d --build
-docker compose logs -f worker
-```
-
-本地覆盖文件只监听 127.0.0.1:3000。远程服务器可先执行 ssh -L 3000:127.0.0.1:3000 user@server，从电脑访问 localhost。主 Compose 不发布宿主机端口，供反向代理接入。
-
-## Coolify + Cloudflare Access
-
-1. 将源码放入自己的 Git 仓库；Coolify 创建 Git 应用，构建方式选 Docker Compose，文件为 /compose.yaml。
-2. 设置 APP_ORIGIN=https://你的域名、APP_PASSWORD、ENCRYPTION_KEY。web 与 worker 必须使用同一密钥与数据卷。
-3. 为 web 的容器端口 3000 配置域名；不要给 worker 分配公开域名，也不要额外添加公网端口映射。
-4. DNS 开启 Cloudflare 代理。在 Zero Trust 中为此具体域名添加自托管 Access 应用，保护整个域名（路径留空），Allow 仅限自己的邮箱。
-5. 同时检查 Coolify 默认域名等其他入口。应用自身仍要求密码，避免其他入口绕过 Access 后直接读取数据。
-6. 打开设置扫码，观察 Worker 心跳及首轮同步日志。
-
-普通 Docker 可使用自己的反向代理，或 cloudflared 连接内部 web:3000；Tunnel 与应用需加入同一 Docker 网络。Cloudflare Access 只保护入站浏览器访问，不影响 Worker 向 B 站发起同步。
-
-SQLite 数据卷必须位于同一台机器的本地磁盘，不能把 SQLite 放在 NFS 上。不要横向扩容 web/worker，当前设计每个服务各一个实例。后台仅绑定一个 B 站账号；更换成不同 UID 需使用新的数据卷，避免混合记录。
-
-## 备份与恢复
-
-SQLite 开启 WAL，运行期间不要只复制 bili.db。使用在线备份：
-
-```sh
-docker compose exec web node --experimental-strip-types scripts/backup.ts
-# 取出备份（替换实际文件名）
-docker compose cp web:/app/backups/备份文件名.db ./备份文件名.db
-```
-
-备份目录在容器内，生成后立即复制出去，或另行挂载 /app/backups。备份包含加密后的登录态，需私密保存；另存 ENCRYPTION_KEY，数据库与密钥缺一不可。恢复前停止两个服务，把备份恢复为数据卷中的 bili.db，并确认归属用户为容器 node 用户（UID 1000），恢复原密钥后启动。不要执行 docker compose down -v，除非明确要删除所有数据。
-
-可用外部 cron 定期运行备份命令；程序未自动安排备份。
-
-## 状态准确性的边界
-
-- 缺少观看记录的影片按未看显示，接受旧历史清理或关键词搜索漏匹配造成的误差；可手动标为已看完。搜索失败保留原进度并记录失败。
-- 所有没有进度证据的视频均标为未看；各分 P 仍分别判断，不推断跳过的分 P 已完成。
-- 网页历史接口可能只提供一个 BV 最近观看的 CID；仅保存实际观测到的每个 CID，不推断跳过的 P 已完成。两次同步之间播放完又被覆盖的 P 可能无法捕获，可手动修正。
-- 对同一 CID 保存观测到的最大进度；显式 progress=-1 作为完成证据。调整阈值会重新计算百分比判断。
-- 合集成员变更只在其分页全部成功后清理旧关系；历史、视频记录保留。退订合集隐藏但不删除数据。
-- 无通知、离线播放、下载、Android 客户端。网页播放链接打开 B 站网页，浏览器是否唤起 App 由 B 站处理。
-- B 站未公开承诺这些接口稳定；已验证真实账号扫码绑定、合集导入与历史搜索返回；多 P 的所有边界仍需实际播放核对。账号与网络不同可能触发限流，程序保留断点并退避。
-
-## 验证
+两个进程必须使用相同的环境配置和数据库路径。
 
 ```sh
 npm test
 npm run typecheck
 npm run build
-docker compose config
 ```
 
-测试使用临时数据库和模拟上游，不访问真实 B 站，不含演示账号或硬编码登录凭据。详见 docs/VALIDATION.md。
+测试使用临时数据库和模拟上游，不需要 B 站账号。配置好环境变量后，可运行 `docker compose config --quiet` 验证部署配置。更多验证说明见 [验证记录](docs/VALIDATION.md)。
 
-## 结构
+### 项目结构
 
-- src/app：Next.js 页面与 API。
-- src/components：交互界面。
-- src/lib/bilibili.ts：B 站适配器。
-- src/lib/sync.ts：同步、观测与进度存储。
-- src/lib/db.ts：SQLite、版本表及任务队列；当前 v2 schema（自动追加章节及详情重试表迁移）。后续变更须追加迁移，不能直接改已部署结构。
-- src/worker.ts：常驻 Worker。
-- scripts：备份与健康检查。
-- tests：进度、数据、安全及同步测试。
+```text
+src/app/          页面与服务端 API
+src/components/   交互界面与路由状态
+src/lib/          B 站接口、数据库、鉴权与同步逻辑
+src/worker.ts     后台任务进程
+scripts/          备份与健康检查
+tests/           自动化测试
+```
 
-数据访问使用 Node 24 内置 node:sqlite，避免 SQLite 原生扩展的额外编译依赖。此版未引入 Drizzle。
+技术栈：Next.js、React、TypeScript、Node.js 和 SQLite。数据库结构变更应追加迁移，保留已有用户数据。
 
-## 参考
+## 备份与恢复
 
-独立实现，未复制其他项目源码。接口路径参考：
-- https://github.com/dnasdw/bilibili-followup-aggregator
-- https://github.com/SocialSisterYi/bilibili-API-collect
+数据库使用 WAL，运行时不要只复制 `bili.db`。使用在线备份命令：
 
-相关产品参考：
-- https://github.com/Haven16262/bili-progress-pwa
-- https://github.com/GDORT/BilibiliHistoryFinder
-- https://github.com/LifeArchiveProject/HistoryHub
+```sh
+docker compose exec web node --experimental-strip-types scripts/backup.ts
+# 将实际生成的文件复制到宿主机
+docker compose cp web:/app/backups/<backup-file>.db ./<backup-file>.db
+```
 
-详细接口返回结构仍需实测核对。
+备份默认保存在容器内，请及时复制出去，或挂载 `/app/backups`。本地运行可使用 `npm run backup`。项目不自动安排定时备份。
+
+备份包含加密后的登录凭据，需私密保存；同时另行保存 `ENCRYPTION_KEY`。恢复前停止 web 和 worker，将备份恢复为数据卷中的 `bili.db`，确认文件属于容器内的 node 用户（UID 1000），再使用原密钥启动服务。
+
+`docker compose down -v` 会删除数据卷，请勿用于普通更新或重启。
+
+## 参与贡献
+
+欢迎通过 Issue 报告问题、提出建议，或提交 Pull Request。
+
+报告同步问题时，请提供复现步骤、版本和已脱敏的错误信息。不要上传 Cookie、SESSDATA、访问密码、加密密钥、数据库或包含个人观看记录的完整日志。修改代码后请运行测试、类型检查和生产构建，并同步更新受影响的文档。
+
+## 致谢
+
+接口资料与项目参考：
+
+- [bilibili-API-collect](https://github.com/SocialSisterYi/bilibili-API-collect)
+- [bilibili-followup-aggregator](https://github.com/dnasdw/bilibili-followup-aggregator)
+- [bili-progress-pwa](https://github.com/Haven16262/bili-progress-pwa)
+- [BilibiliHistoryFinder](https://github.com/GDORT/BilibiliHistoryFinder)
+- [HistoryHub](https://github.com/LifeArchiveProject/HistoryHub)
+
+## 许可证
+
+本项目基于 [MIT License](LICENSE) 发布。

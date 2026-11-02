@@ -2,6 +2,7 @@
   "name": "bilibili-tracker",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "engines": {
     "node": ">=24.8 <25"
