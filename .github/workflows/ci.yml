@@ -1,0 +1,29 @@
+name: Verify
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  app:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci --no-audit --no-fund
+      - run: npm test
+      - run: npm run typecheck
+      - run: npm run build
+      - name: Validate Compose
+        run: docker compose config --quiet
+        env:
+          APP_ORIGIN: http://localhost:3000
+          APP_PASSWORD: ci-validation-password-only
+          ENCRYPTION_KEY: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      - name: Keep dependency lock for review
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-lock
+          path: package-lock.json

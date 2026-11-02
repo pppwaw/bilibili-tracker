@@ -1,0 +1,38 @@
+name: bili-follow
+x-app: &app
+  image: bili-follow:local
+  build: .
+  restart: unless-stopped
+  init: true
+  environment: &environment
+    APP_ORIGIN: ${APP_ORIGIN:?Set APP_ORIGIN}
+    APP_PASSWORD: ${APP_PASSWORD:?Set APP_PASSWORD}
+    ENCRYPTION_KEY: ${ENCRYPTION_KEY:?Set ENCRYPTION_KEY}
+    DATABASE_PATH: /app/data/bili.db
+    TZ: Asia/Shanghai
+  volumes:
+    - bili_data:/app/data
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+services:
+  web:
+    <<: *app
+    expose:
+      - "3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+  worker:
+    <<: *app
+    command: ["node", "--experimental-strip-types", "src/worker.ts"]
+    healthcheck:
+      test: ["CMD", "node", "--experimental-strip-types", "scripts/worker-health.ts"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+volumes:
+  bili_data:
