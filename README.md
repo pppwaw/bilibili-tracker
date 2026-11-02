@@ -48,7 +48,8 @@ docker run --rm node:24-alpine node -e "console.log(require('crypto').randomByte
 启动网页和后台同步服务：
 
 ```sh
-docker compose -f compose.yaml -f compose.local.yaml up -d --build
+docker compose -f compose.yaml -f compose.local.yaml pull
+docker compose -f compose.yaml -f compose.local.yaml up -d
 ```
 
 打开 [http://localhost:3000](http://localhost:3000)，输入访问密码。
@@ -68,7 +69,15 @@ docker pull ghcr.io/pppwaw/bilibili-tracker:latest
 - 推送 `v1.2.3` 形式的版本标签：发布 `1.2.3` 和 `1.2` 镜像标签。
 - Pull Request 仅检查和构建镜像，不推送。
 
-web 和 worker 共用同一镜像；worker 启动命令为 `node --experimental-strip-types src/worker.ts`。使用现有 Compose 文件部署预构建镜像时，将共享配置中的 `image` 替换为上述镜像地址，并移除 `build`；保留环境变量与数据卷配置。
+默认 Compose 直接拉取预构建镜像，不在服务器编译。web 和 worker 共用同一镜像；worker 启动命令为 `node --experimental-strip-types src/worker.ts`。可在 `.env` 中设置 `BILI_IMAGE=ghcr.io/pppwaw/bilibili-tracker:sha-<短提交号>` 固定版本或回滚。
+
+更新时先执行 `docker compose pull`，再执行 `docker compose up -d`；使用本地端口覆盖文件时，两条命令都加上 `-f compose.yaml -f compose.local.yaml`。在 CI 完成镜像发布后再更新；仅推送源码不会改变已运行的容器。
+
+需要自行编译（例如修改源码或使用其他 CPU 架构）时，使用可选覆盖文件：
+
+```sh
+docker compose -f compose.yaml -f compose.local.yaml -f compose.build.yaml up -d --build
+```
 
 GHCR 包的可见性需在包设置中单独确认；仓库公开不代表镜像一定可匿名拉取。私有包需要先登录 GHCR。发布使用 GitHub 自动提供的 `GITHUB_TOKEN`，无需另外配置发布密钥。
 
@@ -85,6 +94,7 @@ GHCR 包的可见性需在包设置中单独确认；仓库公开不代表镜像
 
 | 变量 | 说明 |
 | --- | --- |
+| `BILI_IMAGE` | Compose 使用的镜像，默认 `ghcr.io/pppwaw/bilibili-tracker:latest` |
 | `APP_ORIGIN` | 浏览器访问的完整源地址，含协议与端口，必须与实际地址一致 |
 | `APP_PASSWORD` | 网页访问密码，至少 12 位 |
 | `ENCRYPTION_KEY` | 32 字节加密密钥，以 64 位十六进制表示；web 和 worker 必须一致 |
@@ -99,7 +109,7 @@ GHCR 包的可见性需在包设置中单独确认；仓库公开不代表镜像
 2. 设置 `APP_ORIGIN=https://your-domain.example`、`APP_PASSWORD` 和 `ENCRYPTION_KEY`。
 3. 为 `web` 的容器端口 `3000` 配置域名及 HTTPS。
 4. 保持 `worker` 不对外暴露，确保两个服务共享数据卷与密钥。
-5. 部署后登录网页，绑定账号，并检查 Worker 心跳和同步日志。
+5. 确认 GHCR 镜像已发布并能被服务器拉取；私有包需在部署平台配置镜像仓库凭据。部署后登录网页，绑定账号，并检查 Worker 心跳和同步日志。
 
 主 Compose 文件不发布宿主机端口。使用其他反向代理时，将代理接入应用网络并转发到 `web:3000`。可另外配置 Cloudflare Access；同时检查默认域名等其他入口是否受到保护。
 

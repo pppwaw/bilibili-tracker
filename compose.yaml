@@ -1,7 +1,6 @@
 name: bili-follow
 x-app: &app
-  image: bili-follow:local
-  build: .
+  image: ${BILI_IMAGE:-ghcr.io/pppwaw/bilibili-tracker:latest}
   restart: unless-stopped
   init: true
   environment: &environment

@@ -20,7 +20,10 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
       - name: Validate Compose
-        run: docker compose config --quiet
+        run: |
+          docker compose config --quiet
+          docker compose -f compose.yaml -f compose.local.yaml config --quiet
+          docker compose -f compose.yaml -f compose.local.yaml -f compose.build.yaml config --quiet
         env:
           APP_ORIGIN: http://localhost:3000
           APP_PASSWORD: ci-validation-password-only
