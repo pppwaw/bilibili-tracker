@@ -55,6 +55,23 @@ docker compose -f compose.yaml -f compose.local.yaml up -d --build
 
 本地配置仅监听 `127.0.0.1:3000`。远程部署请配置 HTTPS 反向代理，或通过 SSH 隧道访问。
 
+### 预构建镜像
+
+GitHub Actions 在测试、类型检查和生产构建通过后，自动构建并发布镜像到 GHCR（目前为 `linux/amd64`）：
+
+```sh
+docker pull ghcr.io/pppwaw/bilibili-tracker:latest
+```
+
+- `latest`：主分支最新构建。
+- `sha-<短提交号>`：对应具体提交的构建。
+- 推送 `v1.2.3` 形式的版本标签：发布 `1.2.3` 和 `1.2` 镜像标签。
+- Pull Request 仅检查和构建镜像，不推送。
+
+web 和 worker 共用同一镜像；worker 启动命令为 `node --experimental-strip-types src/worker.ts`。使用现有 Compose 文件部署预构建镜像时，将共享配置中的 `image` 替换为上述镜像地址，并移除 `build`；保留环境变量与数据卷配置。
+
+GHCR 包的可见性需在包设置中单独确认；仓库公开不代表镜像一定可匿名拉取。私有包需要先登录 GHCR。发布使用 GitHub 自动提供的 `GITHUB_TOKEN`，无需另外配置发布密钥。
+
 ### 首次使用
 
 1. 在「设置」中扫码绑定 B 站账号，也可填写 SESSDATA / Cookie。
